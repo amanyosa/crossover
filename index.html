@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ca" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XO-4 Crossover</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Aplica el tema abans de pintar per evitar el parpelleig
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('crossoverTheme'); } catch (e) {}
+      if (t !== 'dark' && t !== 'light') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body>
+  <!-- Gradients compartits per tots els potenciòmetres -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <radialGradient id="kBody" cx="50%" cy="35%" r="70%">
+        <stop offset="0" stop-color="#4a4f58"/>
+        <stop offset="1" stop-color="#15171b"/>
+      </radialGradient>
+      <linearGradient id="kCap" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#3b4048"/>
+        <stop offset="1" stop-color="#1c1f24"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <main class="rack" id="rack">
+    <header class="unit master">
+      <div class="brand">
+        <div class="logo">XO<span>·</span>4</div>
+        <div class="model">CROSSOVER DIGITAL · 2 × 4</div>
+      </div>
+
+      <div class="ctrl">
+        <button class="power" id="power" aria-label="Encendre / apagar"><i></i></button>
+        <span class="mini-label">POWER</span>
+      </div>
+
+      <div class="status-lcd" id="status">STANDBY</div>
+
+      <div class="ctrl">
+        <div class="seg" id="inSeg">
+          <button data-n="1" class="on">1</button>
+          <button data-n="2">2</button>
+        </div>
+        <span class="mini-label">ENTRADES</span>
+      </div>
+
+      <div class="ctrl" id="routeWrap" hidden>
+        <div class="seg" id="routeSeg">
+          <button data-r="mon" class="on">MONITOR</button>
+          <button data-r="multi">MULTICANAL</button>
+        </div>
+        <span class="mini-label">SORTIDA D'ÀUDIO</span>
+      </div>
+
+      <div class="ctrl">
+        <button class="btn tilt-btn on" id="tiltBtn"><i></i>TILT +3 dB/oct</button>
+        <span class="mini-label">ANALITZADOR</span>
+      </div>
+
+      <div class="ctrl">
+        <button class="pro-key" id="proKey" aria-pressed="false">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 14a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm5.6-4A6 6 0 1 0 12.6 14H15v2h2v-2h2v2h2v-4h-8.4z"/></svg>
+          PRO
+        </button>
+        <span class="mini-label">MODE PRO</span>
+      </div>
+
+      <div class="spacer"></div>
+
+      <div class="header-links">
+        <a class="donate-pill" href="https://buy.stripe.com/14AfZj0wWeYH3jzeSwa7C00" target="_blank" rel="noopener">♡ Convida'ns a un cafè</a>
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Canvia entre mode clar i fosc">
+          <span class="theme-toggle-opt" data-theme-opt="dark">Fosc</span>
+          <span class="theme-toggle-opt" data-theme-opt="light">Clar</span>
+        </button>
+      </div>
+
+      <div class="master-out">
+        <div id="masterKnob"></div>
+        <div class="meter-wrap"><div id="masterMeter"></div><span>OUT</span></div>
+      </div>
+    </header>
+  </main>
+
+  <footer class="credits">Aplicatiu desenvolupat per <a href="https://amanyosa.cat" target="_blank" rel="noopener">amanyosa.cat</a> &middot; <a href="#" data-mail>Contacte</a> &middot; <a href="https://buy.stripe.com/14AfZj0wWeYH3jzeSwa7C00" target="_blank" rel="noopener">♡ Convida'ns a un cafè</a></footer>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

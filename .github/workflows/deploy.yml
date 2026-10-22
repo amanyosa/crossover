@@ -1,0 +1,26 @@
+name: Desplega per FTP
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ftp-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clona el repositori
+        uses: actions/checkout@v4
+
+      - name: Puja els fitxers per FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: 134.0.10.133
+          username: amanyosad9
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftp
+          server-dir: /web/crossover/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.github/**
+            **/.claude/**
