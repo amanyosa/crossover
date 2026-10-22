@@ -325,3 +325,11 @@ body:not(.pro) .pro-only { display: none !important; }
 
 /* Al tema clar, els noms de banda més foscos perquè es llegeixin sobre l'alumini */
 html[data-theme="light"] .band-name { filter: brightness(.72) saturate(1.4); }
+
+/* Mode PRO desactivat temporalment */
+.pro-key.soon { opacity: .5; cursor: not-allowed; }
+.pro-key.soon:active { transform: none; }
+.soon-tag {
+  font: 700 7.5px var(--mono); letter-spacing: .08em; color: #1a1206; background: var(--amber);
+  border-radius: 2px; padding: 1px 4px; margin-left: 4px; vertical-align: 1px;
+}

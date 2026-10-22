@@ -28,6 +28,7 @@ const FILTERS = {
   BS12: { label: 'Bessel 12 dB/oct', short: 'BES 12', q: [0.5773], invertHP: true },
 };
 const DEFAULT_FILTER = 'LR24';
+const PRO_AVAILABLE = false;        // mode PRO desactivat temporalment ("properament")
 
 const SOURCES = [
   ['off', 'OFF'], ['pink', 'ROSA'], ['white', 'BLANC'], ['brown', 'MARRÓ'],
@@ -1041,7 +1042,16 @@ class App {
     });
 
     const proKey = $('#proKey');
+    if (!PRO_AVAILABLE) {
+      proKey.classList.add('soon');
+      proKey.setAttribute('aria-disabled', 'true');
+      proKey.title = 'Mode PRO: properament';
+    }
     proKey.addEventListener('click', () => {
+      if (!PRO_AVAILABLE) {
+        toast('Mode PRO properament: tipus de filtre, polaritat i retard per banda');
+        return;
+      }
       this.pro = !this.pro;
       proKey.classList.toggle('on', this.pro);
       proKey.setAttribute('aria-pressed', this.pro);
