@@ -1,0 +1,4 @@
+# Aquesta eina fa servir el micròfon: sobreescriu el Permissions-Policy de /web/.htaccess.
+<IfModule mod_headers.c>
+  Header always set Permissions-Policy "camera=(), microphone=(self), geolocation=(), payment=(), usb=()"
+</IfModule>
