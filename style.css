@@ -251,6 +251,7 @@ html[data-theme="light"] .theme-toggle::before { transform: translateX(100%); }
 .input-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 14px; }
 .src-extra { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .file-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mic-note { margin: 0; font-size: 10px; line-height: 1.35; color: var(--silk-dim); }
 .file-name { font: 500 10px var(--mono); color: var(--silk-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 select.lcd-select {

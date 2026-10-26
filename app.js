@@ -498,6 +498,7 @@ class Channel {
           </div>
           <div class="src-extra">
             <select class="lcd-select dev-select" aria-label="Dispositiu d'entrada"><option>Dispositiu per defecte</option></select>
+            <p class="mic-note">L'àudio es processa al teu navegador i no s'envia enlloc.</p>
             <div class="file-row">
               <button class="mini file-btn">Carrega fitxer…</button>
               <span class="file-name">Cap fitxer</span>
@@ -561,6 +562,7 @@ class Channel {
     $('.slot-inmeter', root).appendChild(ui.inMeter.el);
 
     ui.devSelect = $('.dev-select', root);
+    ui.micNote = $('.mic-note', root);
     ui.devSelect.addEventListener('change', () => {
       this.deviceId = ui.devSelect.value;
       if (this.source === 'mic') this.setSource('mic');
@@ -655,6 +657,7 @@ class Channel {
     $$('.src', this.ui.root).forEach(b => b.classList.toggle('on', b.dataset.src === this.source));
     this.ui.sineSlot.style.visibility = this.source === 'sine' ? 'visible' : 'hidden';
     this.ui.devSelect.hidden = this.source !== 'mic';
+    this.ui.micNote.hidden = this.source !== 'mic';
     this.ui.fileRow.hidden = this.source !== 'file' && !this.fileBuffer;
   }
 
@@ -1113,7 +1116,7 @@ $('#themeToggle').addEventListener('click', () => {
 });
 
 /* ---------- correu de contacte (ofuscat) ---------- */
-const MAIL_USER = 'amanyosa', MAIL_DOMAIN = 'gmail.com';
+const MAIL_USER = 'contacte', MAIL_DOMAIN = 'amanyosa.cat';
 $$('a[data-mail]').forEach(a => { a.href = 'mailto:' + MAIL_USER + '@' + MAIL_DOMAIN; });
 
 window.addEventListener('DOMContentLoaded', () => { window.xo = new App(); });
