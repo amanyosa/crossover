@@ -1657,6 +1657,37 @@ $('#themeToggle').addEventListener('click', () => {
   try { localStorage.setItem('crossoverTheme', next); } catch (e) { /* sense emmagatzematge */ }
 });
 
+/* ---------- instruccions i avís de navegador ---------- */
+function openModal(id) {
+  const ov = $('#' + id);
+  ov.hidden = false;
+  const m = $('.modal', ov);
+  m.scrollTop = 0;
+  m.focus();
+}
+function closeModal(ov) {
+  ov.hidden = true;
+  if (ov.id === 'browserOverlay' && $('#browserDismiss').checked) {
+    try { localStorage.setItem('crossoverBrowserNotice', 'off'); } catch (e) { /* sense emmagatzematge */ }
+  }
+}
+$$('.overlay').forEach(ov => {
+  $('.modal-close', ov).addEventListener('click', () => closeModal(ov));
+  ov.addEventListener('click', e => { if (e.target === ov) closeModal(ov); });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $$('.overlay').forEach(ov => { if (!ov.hidden) closeModal(ov); });
+});
+$('#helpBtn').addEventListener('click', () => openModal('helpOverlay'));
+
+// Només avisem si el navegador no pot triar la targeta de sortida (Chrome i Edge sí que en poden)
+(function () {
+  let off = false;
+  try { off = localStorage.getItem('crossoverBrowserNotice') === 'off'; } catch (e) { /* sense emmagatzematge */ }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!off && AC && !('setSinkId' in AC.prototype)) openModal('browserOverlay');
+})();
+
 /* ---------- correu de contacte (ofuscat) ---------- */
 const MAIL_USER = 'contacte', MAIL_DOMAIN = 'amanyosa.cat';
 $$('a[data-mail]').forEach(a => { a.href = 'mailto:' + MAIL_USER + '@' + MAIL_DOMAIN; });

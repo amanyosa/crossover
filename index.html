@@ -69,6 +69,7 @@
       <div class="spacer"></div>
 
       <div class="header-links">
+        <button class="donate-pill help-pill" id="helpBtn" type="button" aria-haspopup="dialog">? Instruccions</button>
         <a class="donate-pill" href="https://buy.stripe.com/14AfZj0wWeYH3jzeSwa7C00" target="_blank" rel="noopener">♡ Convida'ns a un cafè</a>
         <button class="theme-toggle" id="themeToggle" type="button" aria-label="Canvia entre mode clar i fosc">
           <span class="theme-toggle-opt" data-theme-opt="dark">Fosc</span>
@@ -84,6 +85,42 @@
   </main>
 
   <footer class="credits">Aplicatiu desenvolupat per <a href="https://amanyosa.cat" target="_blank" rel="noopener">amanyosa.cat</a> &middot; <a href="#" data-mail>Contacte</a> &middot; <a href="https://buy.stripe.com/14AfZj0wWeYH3jzeSwa7C00" target="_blank" rel="noopener">♡ Convida'ns a un cafè</a> &middot; <a href="https://amanyosa.cat/avis-legal/" target="_blank" rel="noopener">Avís legal</a> &middot; <a href="https://amanyosa.cat/privacitat/" target="_blank" rel="noopener">Privacitat</a> &middot; <a href="https://amanyosa.cat/cookies/" target="_blank" rel="noopener">Cookies</a></footer>
+
+  <!-- Instruccions -->
+  <div class="overlay" id="helpOverlay" hidden>
+    <div class="modal" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <h2 id="helpTitle">Com funciona el XO-4</h2>
+      <p><em>Engega'l.</em> Prem <b>POWER</b> i tria una font a l'entrada: soroll rosa, blanc o marró, un sinus de freqüència ajustable, un escombrat de 20 Hz a 20 kHz, el micròfon o una entrada de línia, o un fitxer d'àudio teu. Puja el <b>MASTER</b> amb compte: comença a −12 dB.</p>
+      <p><em>Entrades.</em> Amb el selector <b>ENTRADES</b> pots treballar amb una entrada o amb dues. Cada entrada té el seu propi crossover, les seves sortides i el seu analitzador.</p>
+      <p><em>Crossover.</em> Tria quantes sortides vols per entrada (2, 3 o 4) i mou els potenciòmetres <b>TALL</b> per fixar les freqüències de tall. També pots arrossegar les línies verticals directament sobre l'analitzador. Els talls no es poden creuar entre ells.</p>
+      <p><em>Sortides.</em> Cada banda té vúmetre, <b>GUANY</b>, <b>SOLO</b> i <b>MUTE</b>. Amb SOLO escoltes només aquella banda; pots posar-ne més d'una en solo alhora, i el solo afecta les dues entrades.</p>
+      <p><em>Analitzador.</em> Mostra l'espectre de l'entrada i la resposta de cada banda. Si fas solo d'una banda, en veus l'espectre amb el seu color. La línia blanca discontínua és la <b>suma</b> de totes les vies: si és plana, el crossover suma bé. El botó <b>TILT +3 dB/oct</b> fa que el soroll rosa es vegi pla.</p>
+      <p><em>Potenciòmetres.</em> Arrossega amunt o avall (amb Maj per anar fi), fes servir la roda del ratolí o les fletxes del teclat. Doble clic per tornar al valor inicial.</p>
+
+      <h2>Una mica de teoria</h2>
+      <p><em>Què és un crossover.</em> Cap altaveu reprodueix bé tot l'espectre. El crossover divideix el senyal en bandes perquè cada via (subgreus, greus, mitjos, aguts) rebi només les freqüències que sap reproduir.</p>
+      <p><em>Linkwitz-Riley 24 dB/oct.</em> És el filtre per defecte. A la freqüència de tall cada banda cau 6 dB i les dues bandes estan en fase, així que en sumar-se donen una resposta plana. Per això és l'estàndard en sonorització.</p>
+      <p><em>Pendent.</em> Els dB/oct indiquen com de ràpid atenua el filtre fora de la seva banda. Com més pendent, més protegit queda l'altaveu, però més canvia la fase al voltant del tall.</p>
+
+      <h2>Mode PRO <span class="soon-tag">PROPERAMENT</span></h2>
+      <p>Tipus de filtre per a cada tall (Linkwitz-Riley, Butterworth i Bessel), polaritat i retard per banda, i sortides a una targeta de so multicanal amb matriu, retard en ms o metres, i configuracions que es poden desar i compartir.</p>
+
+      <h2>Navegador</h2>
+      <p>Recomanem <b>Chrome</b> o <b>Edge</b>. El crossover funciona en qualsevol navegador actual, però només aquests permeten triar la targeta de so de sortida des de la pàgina. L'àudio es processa al teu ordinador i no s'envia enlloc.</p>
+
+      <button class="modal-close" type="button">Tanca</button>
+    </div>
+  </div>
+
+  <!-- Avís de navegador -->
+  <div class="overlay" id="browserOverlay" hidden>
+    <div class="modal modal-sm" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="browserTitle">
+      <h2 id="browserTitle">Fes servir Chrome o Edge</h2>
+      <p>El crossover funciona en aquest navegador, però <b>no podràs triar la targeta de so de sortida des de la pàgina</b>: caldria posar-la com a sortida per defecte del sistema. Per fer-ho tot des d'aquí, obre aquesta pàgina amb <b>Google Chrome</b> o <b>Microsoft Edge</b>.</p>
+      <label class="modal-check"><input type="checkbox" id="browserDismiss"> No ho tornis a mostrar</label>
+      <button class="modal-close" type="button">Entesos</button>
+    </div>
+  </div>
 
   <div class="toast" id="toast" role="status"></div>
   <script src="app.js"></script>
