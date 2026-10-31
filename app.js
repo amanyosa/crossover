@@ -28,7 +28,13 @@ const FILTERS = {
   BS12: { label: 'Bessel 12 dB/oct', short: 'BES 12', q: [0.5773], invertHP: true },
 };
 const DEFAULT_FILTER = 'LR24';
-const PRO_AVAILABLE = false;        // mode PRO desactivat temporalment ("properament")
+// Mode PRO desactivat temporalment ("properament"). Per provar-lo: afegeix ?pro a l'adreça.
+const PRO_AVAILABLE = new URLSearchParams(location.search).has('pro');
+
+const MAX_OUTS = 16;                // sortides físiques màximes que gestionem
+const MAX_OUT_DELAY_MS = 500;       // ≈ 170 m a 20 °C
+const PRESETS_KEY = 'crossoverPresets';
+const soundSpeed = tempC => 331.3 + 0.606 * tempC; // m/s
 
 const SOURCES = [
   ['off', 'OFF'], ['pink', 'ROSA'], ['white', 'BLANC'], ['brown', 'MARRÓ'],
@@ -240,8 +246,10 @@ class Channel {
 
     this.enabled = idx === 0;
     this.source = 'off';
-    this.srcNode = null; this.srcTrim = null; this.stream = null; this.sweepTimer = null;
+    this.srcNode = null; this.srcTrim = null; this.srcSplit = null; this.stream = null; this.sweepTimer = null;
     this.fileBuffer = null; this.deviceId = '';
+    this.inChan = -1;                // canal de la targeta (-1 = mescla mono), només en mode PRO
+    this.inChanCount = 0;
     this.level = -12;
     this.sineFreq = 1000;
     this.n = 4;
@@ -374,6 +382,7 @@ class Channel {
     });
     this.updateRanges();
     this.rebuild();
+    if (this.app.ready) this.app.outputs.renderMatrix();
   }
 
   setEnabled(on) {
@@ -381,6 +390,45 @@ class Channel {
     this.ui.root.hidden = !on;
     if (!on) this.setSource('off');
     this.app.updateMutes();
+    this.app.outputs.renderMatrix();
+  }
+
+  /* ----- configuracions ----- */
+  getState() {
+    return {
+      level: this.level, n: this.n, xo: this.xo.slice(0, this.n - 1), xoType: this.xoType.slice(),
+      inChan: this.inChan,
+      bands: this.bands.map(b => ({ gain: b.gain, mute: b.mute, invert: b.invert, delay: b.delay })),
+    };
+  }
+
+  setState(s) {
+    if (!s) return;
+    const ui = this.ui;
+    if ([2, 3, 4].includes(s.n)) this.setN(s.n);
+    if (Array.isArray(s.xo)) {
+      s.xo.slice(0, this.n - 1).forEach((f, j) => { if (isFinite(f)) this.xo[j] = clamp(+f, F_MIN, F_MAX); });
+      this.xo.slice(0, this.n - 1).forEach((f, j) => ui.xo[j].knob.set(f, false));
+    }
+    if (Array.isArray(s.xoType)) s.xoType.forEach((t, j) => {
+      if (FILTERS[t] && j < 3) { this.xoType[j] = t; ui.xo[j].sel.value = t; }
+    });
+    if (isFinite(s.level)) { ui.level.set(+s.level, true); }
+    if (isFinite(s.inChan)) this.inChan = +s.inChan;
+    if (Array.isArray(s.bands)) s.bands.slice(0, 4).forEach((bs, i) => {
+      const b = this.bands[i], bu = ui.bands[i];
+      if (isFinite(bs.gain)) { b.gain = clamp(+bs.gain, -24, 12); bu.gain.set(b.gain, false); }
+      if (isFinite(bs.delay)) { b.delay = clamp(+bs.delay, 0, 20); bu.delay.set(b.delay, false); }
+      b.mute = !!bs.mute; b.invert = !!bs.invert; b.solo = false;
+      [['solo', b.solo], ['mute', b.mute], ['inv', b.invert]].forEach(([cls, on]) => {
+        const btn = $('.' + cls, bu.root);
+        btn.classList.toggle('on', on);
+        btn.setAttribute('aria-pressed', on);
+      });
+    });
+    this.updateRanges();
+    this.rebuild();
+    if (this.source === 'mic') this.setSource('mic');
   }
 
   /* ----- fonts d'entrada ----- */
@@ -390,6 +438,7 @@ class Channel {
       this.srcNode.disconnect();
       this.srcNode = null;
     }
+    if (this.srcSplit) { this.srcSplit.disconnect(); this.srcSplit = null; }
     if (this.srcTrim) { this.srcTrim.disconnect(); this.srcTrim = null; }
     clearInterval(this.sweepTimer);
     this.sweepTimer = null;
@@ -432,13 +481,16 @@ class Channel {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: this.deviceId ? { exact: this.deviceId } : undefined,
+            channelCount: { ideal: 32 },
             echoCancellation: false, noiseSuppression: false, autoGainControl: false,
           },
         });
         if (this.source !== 'mic') { stream.getTracks().forEach(t => t.stop()); return; }
         this.stream = stream;
         node = ctx.createMediaStreamSource(stream);
+        this.inChanCount = stream.getAudioTracks()[0]?.getSettings().channelCount || 2;
         this.populateDevices(stream);
+        this.populateChannels();
       } catch (e) {
         toast(`Entrada ${this.letter}: no s'ha pogut accedir al micròfon / línia`);
         this.source = 'off';
@@ -455,7 +507,14 @@ class Channel {
     if (node) {
       this.srcTrim = ctx.createGain();
       this.srcTrim.gain.value = trim;
-      node.connect(this.srcTrim);
+      // Mode PRO: agafa només un canal de la targeta en lloc de la mescla mono
+      if (type === 'mic' && this.app.pro && this.inChan >= 0 && this.inChan < this.inChanCount) {
+        this.srcSplit = ctx.createChannelSplitter(this.inChanCount);
+        node.connect(this.srcSplit);
+        this.srcSplit.connect(this.srcTrim, this.inChan);
+      } else {
+        node.connect(this.srcTrim);
+      }
       this.srcTrim.connect(this.inGain);
       this.srcNode = node;
       setTimeout(() => { if (this.ctx.state !== 'running') toast('Prem POWER per sentir el senyal'); }, 400);
@@ -469,6 +528,15 @@ class Channel {
     sel.innerHTML = devs.map((d, i) =>
       `<option value="${d.deviceId}">${(d.label || 'Entrada ' + (i + 1)).replace(/</g, '&lt;')}</option>`).join('');
     if (current) sel.value = current;
+  }
+
+  populateChannels() {
+    const sel = this.ui.chanSelect, n = this.inChanCount;
+    if (this.inChan >= n) this.inChan = -1;
+    sel.innerHTML = '<option value="-1">Mescla de tots els canals (mono)</option>' +
+      Array.from({ length: n }, (_, k) => `<option value="${k}">Canal ${k + 1} de la targeta</option>`).join('');
+    sel.value = this.inChan;
+    this.updateSourceUI();
   }
 
   async loadFile(file) {
@@ -498,6 +566,7 @@ class Channel {
           </div>
           <div class="src-extra">
             <select class="lcd-select dev-select" aria-label="Dispositiu d'entrada"><option>Dispositiu per defecte</option></select>
+            <select class="lcd-select chan-select pro-only" aria-label="Canal d'entrada de la targeta"></select>
             <p class="mic-note">L'àudio es processa al teu navegador i no s'envia enlloc.</p>
             <div class="file-row">
               <button class="mini file-btn">Carrega fitxer…</button>
@@ -565,6 +634,11 @@ class Channel {
     ui.micNote = $('.mic-note', root);
     ui.devSelect.addEventListener('change', () => {
       this.deviceId = ui.devSelect.value;
+      if (this.source === 'mic') this.setSource('mic');
+    });
+    ui.chanSelect = $('.chan-select', root);
+    ui.chanSelect.addEventListener('change', () => {
+      this.inChan = +ui.chanSelect.value;
       if (this.source === 'mic') this.setSource('mic');
     });
     ui.fileRow = $('.file-row', root);
@@ -657,6 +731,7 @@ class Channel {
     $$('.src', this.ui.root).forEach(b => b.classList.toggle('on', b.dataset.src === this.source));
     this.ui.sineSlot.style.visibility = this.source === 'sine' ? 'visible' : 'hidden';
     this.ui.devSelect.hidden = this.source !== 'mic';
+    this.ui.chanSelect.hidden = this.source !== 'mic' || !this.inChanCount;
     this.ui.micNote.hidden = this.source !== 'mic';
     this.ui.fileRow.hidden = this.source !== 'file' && !this.fileBuffer;
   }
@@ -982,6 +1057,427 @@ function hexA(hex, a) {
 }
 
 /* =====================================================================
+   Sortides físiques (mode PRO): targeta, matriu i processat per sortida
+   ===================================================================== */
+class OutputSection {
+  constructor(app) {
+    this.app = app;
+    const ctx = this.ctx = app.ctx;
+    this.tempC = 20;
+    this.unit = 'ms';
+    this.deviceId = '';
+    this.matrix = {};                // "canal-banda" → [sortides]
+    this.defaultMatrix(app.outCount);
+
+    // Cada sortida: suma → polaritat → retard → guany → mute → (vúmetre) → canal k de la targeta
+    this.outs = Array.from({ length: MAX_OUTS }, (_, k) => {
+      const o = {
+        name: `OUT ${k + 1}`, gain: 0, mute: false, invert: false, delay: 0,
+        in: ctx.createGain(), pol: ctx.createGain(), dly: ctx.createDelay(MAX_OUT_DELAY_MS / 1000 + 0.01),
+        amp: ctx.createGain(), mt: ctx.createGain(), an: makeAnalyser(ctx),
+      };
+      o.in.channelCount = 1;
+      o.in.channelCountMode = 'explicit';
+      o.in.connect(o.pol); o.pol.connect(o.dly); o.dly.connect(o.amp); o.amp.connect(o.mt);
+      o.mt.connect(o.an);
+      o.mt.connect(app.merger, 0, k);
+      return o;
+    });
+    this.buildUI();
+  }
+
+  get count() { return this.app.outCount; }
+  key(ch, i) { return `${ch}-${i}`; }
+  targets(ch, i) { return (this.matrix[this.key(ch, i)] || []).filter(k => k < this.count); }
+
+  defaultMatrix(count) {
+    this.matrix = {};
+    for (let ch = 0; ch < 2; ch++) for (let i = 0; i < 4; i++) this.matrix[this.key(ch, i)] = [(ch * 4 + i) % count];
+  }
+
+  applyOut(k) {
+    const o = this.outs[k], t = this.ctx.currentTime;
+    o.pol.gain.value = o.invert ? -1 : 1;
+    o.dly.delayTime.setTargetAtTime(o.delay / 1000, t, 0.01);
+    o.amp.gain.setTargetAtTime(dbToLin(o.gain), t, 0.01);
+    o.mt.gain.setTargetAtTime(o.mute ? 0 : 1, t, 0.008);
+  }
+
+  /* ----- retard: ms ⇄ metres ----- */
+  msToUnit(ms) { return this.unit === 'm' ? ms / 1000 * soundSpeed(this.tempC) : ms; }
+  unitToMs(v) { return this.unit === 'm' ? v / soundSpeed(this.tempC) * 1000 : v; }
+  fmtDelay(ms) {
+    const m = ms / 1000 * soundSpeed(this.tempC);
+    return this.unit === 'm' ? `${ms.toFixed(2)} ms` : `${m.toFixed(2)} m`;
+  }
+
+  /* ----- interfície ----- */
+  buildUI() {
+    const root = this.root = el('section', 'unit outunit pro-only');
+    root.innerHTML = `
+      <div class="sec-title"><span class="ch-badge">OUT</span>SORTIDES FÍSIQUES · TARGETA DE SO</div>
+      <div class="out-toolbar">
+        <div class="ctrl">
+          <div class="seg route-seg">
+            <button data-r="mon" class="on">MONITOR</button>
+            <button data-r="multi">INTERFÍCIE</button>
+          </div>
+          <span class="mini-label">MODE DE SORTIDA</span>
+        </div>
+        <div class="ctrl dev-ctrl">
+          <div class="dev-row">
+            <select class="lcd-select out-dev" aria-label="Targeta de sortida"><option value="">Sortida per defecte del sistema</option></select>
+            <button class="mini dev-perm" title="Cal per veure el nom de les targetes">Mostra els noms</button>
+          </div>
+          <span class="mini-label out-info"></span>
+        </div>
+        <div class="ctrl">
+          <div class="seg unit-seg"><button data-u="ms" class="on">ms</button><button data-u="m">m</button></div>
+          <span class="mini-label">UNITAT DE RETARD</span>
+        </div>
+        <div class="ctrl">
+          <label class="temp-field"><input type="number" class="lcd-input temp-in" min="-20" max="50" step="1" value="20"> °C</label>
+          <span class="mini-label temp-info"></span>
+        </div>
+        <div class="ctrl presets">
+          <div class="preset-row">
+            <select class="lcd-select preset-sel" aria-label="Configuracions desades"></select>
+            <input type="text" class="lcd-input preset-name" placeholder="Nom de la configuració" maxlength="40">
+            <button class="mini preset-save">DESA</button>
+            <button class="mini preset-del">ESBORRA</button>
+            <button class="mini preset-exp">EXPORTA</button>
+            <button class="mini preset-imp">IMPORTA</button>
+            <input type="file" class="preset-file" accept="application/json,.json" hidden>
+          </div>
+          <span class="mini-label">CONFIGURACIONS</span>
+        </div>
+      </div>
+      <p class="out-note"></p>
+      <div class="matrix-wrap"><table class="matrix"></table></div>
+      <div class="ostrips"></div>`;
+    this.app.rack.appendChild(root);
+
+    $$('.route-seg button', root).forEach(b => b.addEventListener('click', () => this.app.setRouting(b.dataset.r)));
+    $$('.unit-seg button', root).forEach(b => b.addEventListener('click', () => {
+      this.unit = b.dataset.u;
+      $$('.unit-seg button', root).forEach(x => x.classList.toggle('on', x === b));
+      this.refreshDelays();
+    }));
+    const tempIn = $('.temp-in', root);
+    tempIn.addEventListener('change', () => {
+      this.tempC = clamp(+tempIn.value || 20, -20, 50);
+      tempIn.value = this.tempC;
+      this.refreshDelays();
+    });
+
+    this.devSel = $('.out-dev', root);
+    this.devSel.addEventListener('change', () => this.setDevice(this.devSel.value));
+    $('.dev-perm', root).addEventListener('click', () => this.askDeviceLabels());
+    if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => this.listDevices());
+
+    this.strips = this.outs.map((o, k) => this.buildStrip(o, k));
+    this.app.presets.bind(root);
+    this.listDevices();
+    this.refreshDelays();
+    this.renderInfo();
+  }
+
+  buildStrip(o, k) {
+    const s = el('div', 'ostrip');
+    s.innerHTML = `
+      <div class="o-head"><span class="o-num">${k + 1}</span><input class="o-name" value="${o.name}" maxlength="14" aria-label="Nom de la sortida ${k + 1}"></div>
+      <div class="o-src"></div>
+      <div class="o-body"><div class="slot-meter"></div><div class="slot-gain"></div></div>
+      <div class="o-delay">
+        <span class="knob-label">RETARD</span>
+        <label class="delay-field"><input type="number" class="lcd-input d-in" min="0" step="0.01" aria-label="Retard de la sortida ${k + 1}"><span class="d-unit"></span></label>
+        <span class="d-alt"></span>
+      </div>
+      <div class="band-btns">
+        <button class="btn mute" aria-pressed="false"><i></i>MUTE</button>
+        <button class="btn inv" aria-pressed="false" title="Inverteix la polaritat"><i></i>Ø</button>
+        <button class="btn ident" title="Envia soroll rosa només per aquesta sortida"><i></i>ID</button>
+      </div>`;
+    const meter = new Meter(false);
+    $('.slot-meter', s).appendChild(meter.el);
+    const gain = new Knob({
+      label: 'GUANY', min: -40, max: 12, value: 0, def: 0, origin: 0, step: 0.1, format: fmtDb, size: 'sm',
+      color: 'var(--amber)',
+      onInput: v => { o.gain = v; this.applyOut(k); },
+    });
+    $('.slot-gain', s).appendChild(gain.el);
+    const nameIn = $('.o-name', s);
+    nameIn.addEventListener('input', () => { o.name = nameIn.value.trim() || `OUT ${k + 1}`; this.renderMatrix(); });
+    const dIn = $('.d-in', s);
+    dIn.addEventListener('change', () => {
+      o.delay = clamp(this.unitToMs(+dIn.value || 0), 0, MAX_OUT_DELAY_MS);
+      this.applyOut(k);
+      this.refreshDelay(k);
+    });
+    const toggle = (btn, key) => btn.addEventListener('click', () => {
+      o[key] = !o[key];
+      this.syncButtons(k);
+      this.applyOut(k);
+    });
+    toggle($('.mute', s), 'mute');
+    toggle($('.inv', s), 'invert');
+    $('.ident', s).addEventListener('click', () => this.identify(k));
+    $('.ostrips', this.root).appendChild(s);
+    return { root: s, meter, gain, nameIn, dIn, src: $('.o-src', s), alt: $('.d-alt', s), unit: $('.d-unit', s) };
+  }
+
+  syncButtons(k) {
+    const o = this.outs[k], s = this.strips[k].root;
+    [['mute', o.mute], ['inv', o.invert]].forEach(([cls, on]) => {
+      const b = $('.' + cls, s);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on);
+    });
+    s.classList.toggle('silenced', o.mute);
+  }
+
+  refreshDelay(k) {
+    const o = this.outs[k], st = this.strips[k];
+    const max = this.msToUnit(MAX_OUT_DELAY_MS);
+    st.dIn.max = max.toFixed(2);
+    st.dIn.step = this.unit === 'm' ? '0.01' : '0.01';
+    st.dIn.value = this.msToUnit(o.delay).toFixed(2);
+    st.unit.textContent = this.unit;
+    st.alt.textContent = '= ' + this.fmtDelay(o.delay);
+  }
+
+  refreshDelays() {
+    this.outs.forEach((_, k) => this.refreshDelay(k));
+    $('.temp-info', this.root).textContent = `SO A ${soundSpeed(this.tempC).toFixed(1)} m/s`;
+  }
+
+  /* Matriu: files = bandes actives, columnes = sortides de la targeta */
+  renderMatrix() {
+    const tbl = $('.matrix', this.root), n = this.count;
+    const rows = [];
+    this.app.channels.forEach(ch => {
+      if (!ch.enabled) return;
+      for (let i = 0; i < ch.n; i++) rows.push({ ch, i });
+    });
+    const head = Array.from({ length: n }, (_, k) =>
+      `<th scope="col" title="${this.outs[k].name.replace(/"/g, '&quot;')}"><span>${k + 1}</span></th>`).join('');
+    tbl.innerHTML = `<thead><tr><th class="mx-corner">BANDA → SORTIDA</th>${head}</tr></thead><tbody>` +
+      rows.map(({ ch, i }) => {
+        const on = this.targets(ch.idx, i);
+        return `<tr style="--c:${BAND_COLORS[i]}"><th scope="row"><i></i>${ch.letter}${i + 1} · ${BAND_NAMES[ch.n][i]}</th>` +
+          Array.from({ length: n }, (_, k) =>
+            `<td><button class="mx-cell${on.includes(k) ? ' on' : ''}" data-ch="${ch.idx}" data-i="${i}" data-k="${k}" ` +
+            `aria-pressed="${on.includes(k)}" aria-label="${ch.letter}${i + 1} a la sortida ${k + 1}"></button></td>`).join('') +
+          '</tr>';
+      }).join('') + '</tbody>';
+    $$('.mx-cell', tbl).forEach(b => b.addEventListener('click', () => {
+      const key = this.key(+b.dataset.ch, +b.dataset.i), k = +b.dataset.k;
+      const list = this.matrix[key] || (this.matrix[key] = []);
+      const at = list.indexOf(k);
+      if (at >= 0) list.splice(at, 1); else list.push(k);
+      this.app.applyRouting();
+    }));
+
+    // Quines bandes alimenten cada sortida
+    this.strips.forEach((st, k) => {
+      st.root.hidden = k >= n;
+      const src = rows.filter(({ ch, i }) => this.targets(ch.idx, i).includes(k));
+      st.src.innerHTML = src.length
+        ? src.map(({ ch, i }) => `<b style="color:${BAND_COLORS[i]}">${ch.letter}${i + 1}</b>`).join(' + ')
+        : '<span>sense senyal</span>';
+    });
+  }
+
+  renderInfo() {
+    const multi = this.app.routing === 'multi';
+    $$('.route-seg button', this.root).forEach(b => b.classList.toggle('on', b.dataset.r === this.app.routing));
+    $('.out-info', this.root).textContent = `${this.count} SORTIDES DISPONIBLES`;
+    this.root.classList.toggle('mon-mode', !multi);
+    const notes = [];
+    if (!multi) notes.push('En mode MONITOR totes les bandes se sumen en estèreo pels altaveus. Passa a INTERFÍCIE per enviar cada banda a una sortida de la targeta.');
+    if (!('setSinkId' in AudioContext.prototype)) notes.push('Aquest navegador no permet triar la targeta des de la pàgina: posa-la com a sortida per defecte del sistema (Chrome i Edge sí que ho permeten).');
+    if (multi && this.count <= 2) notes.push('La sortida actual només té 2 canals. Si la teva targeta en té més, tria-la al selector o, a Windows, configura-la com a 5.1 / 7.1.');
+    const note = $('.out-note', this.root);
+    note.textContent = notes.join(' ');
+    note.hidden = !notes.length;
+  }
+
+  /* ----- targeta de sortida ----- */
+  async listDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput' && d.deviceId && d.deviceId !== 'default');
+    const named = devs.some(d => d.label);
+    this.devSel.innerHTML = '<option value="">Sortida per defecte del sistema</option>' +
+      devs.map((d, i) => `<option value="${d.deviceId}">${(d.label || 'Sortida ' + (i + 1)).replace(/</g, '&lt;')}</option>`).join('');
+    this.devSel.value = devs.some(d => d.deviceId === this.deviceId) ? this.deviceId : '';
+    $('.dev-perm', this.root).hidden = named || !('setSinkId' in AudioContext.prototype);
+    this.devSel.disabled = !('setSinkId' in AudioContext.prototype);
+  }
+
+  async askDeviceLabels() {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+      this.listDevices();
+    } catch (e) {
+      toast('Sense permís no es poden mostrar els noms de les targetes');
+    }
+  }
+
+  async setDevice(id) {
+    if (!('setSinkId' in AudioContext.prototype)) return;
+    // Seguretat: silencia totes les sortides abans de canviar de targeta
+    this.outs.forEach((o, k) => { o.mute = true; this.applyOut(k); this.syncButtons(k); });
+    try {
+      await this.ctx.setSinkId(id);
+      this.deviceId = id;
+    } catch (e) {
+      toast("No s'ha pogut fer servir aquesta targeta");
+      this.devSel.value = this.deviceId;
+    }
+    this.app.updateOutCount();
+    toast('Targeta canviada: totes les sortides estan silenciades. Activa-les una a una.');
+  }
+
+  identify(k) {
+    if (this.app.routing !== 'multi') { toast('Passa a mode INTERFÍCIE per identificar les sortides'); return; }
+    if (this.ctx.state !== 'running') { toast('Prem POWER per sentir el senyal'); return; }
+    const ctx = this.ctx, t = ctx.currentTime;
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = this.app.noise.pink;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.02);
+    g.gain.setValueAtTime(0.5, t + 1.2);
+    g.gain.linearRampToValueAtTime(0, t + 1.3);
+    src.connect(g);
+    g.connect(this.app.merger, 0, k);
+    src.start(t, Math.random() * 6);
+    src.stop(t + 1.35);
+    src.onended = () => g.disconnect();
+    const s = this.strips[k].root;
+    s.classList.add('identing');
+    setTimeout(() => s.classList.remove('identing'), 1300);
+  }
+
+  tick() {
+    for (let k = 0; k < this.count; k++) this.strips[k].meter.update(peakDb(this.outs[k].an));
+  }
+
+  /* ----- configuracions ----- */
+  getState() {
+    return {
+      tempC: this.tempC, unit: this.unit, matrix: JSON.parse(JSON.stringify(this.matrix)),
+      outs: this.outs.map(o => ({ name: o.name, gain: o.gain, mute: o.mute, invert: o.invert, delay: o.delay })),
+    };
+  }
+
+  setState(s) {
+    if (!s) return;
+    if (isFinite(s.tempC)) { this.tempC = clamp(+s.tempC, -20, 50); $('.temp-in', this.root).value = this.tempC; }
+    if (s.unit === 'ms' || s.unit === 'm') {
+      this.unit = s.unit;
+      $$('.unit-seg button', this.root).forEach(b => b.classList.toggle('on', b.dataset.u === s.unit));
+    }
+    if (s.matrix && typeof s.matrix === 'object') {
+      this.matrix = {};
+      Object.entries(s.matrix).forEach(([key, list]) => {
+        if (/^[01]-[0-3]$/.test(key) && Array.isArray(list)) this.matrix[key] = list.filter(k => Number.isInteger(k) && k >= 0 && k < MAX_OUTS);
+      });
+    }
+    if (Array.isArray(s.outs)) s.outs.slice(0, MAX_OUTS).forEach((os, k) => {
+      const o = this.outs[k], st = this.strips[k];
+      if (typeof os.name === 'string') { o.name = os.name.slice(0, 14) || `OUT ${k + 1}`; st.nameIn.value = o.name; }
+      if (isFinite(os.gain)) { o.gain = clamp(+os.gain, -40, 12); st.gain.set(o.gain, false); }
+      if (isFinite(os.delay)) o.delay = clamp(+os.delay, 0, MAX_OUT_DELAY_MS);
+      o.mute = !!os.mute; o.invert = !!os.invert;
+      this.applyOut(k);
+      this.syncButtons(k);
+    });
+    this.refreshDelays();
+  }
+}
+
+/* =====================================================================
+   Configuracions desades (navegador) i fitxers JSON
+   ===================================================================== */
+class Presets {
+  constructor(app) { this.app = app; }
+
+  load() {
+    try { return JSON.parse(localStorage.getItem(PRESETS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  store(all) {
+    try { localStorage.setItem(PRESETS_KEY, JSON.stringify(all)); return true; } catch (e) { return false; }
+  }
+
+  bind(root) {
+    this.sel = $('.preset-sel', root);
+    this.nameIn = $('.preset-name', root);
+    this.fileIn = $('.preset-file', root);
+    this.sel.addEventListener('change', () => {
+      const p = this.load()[this.sel.value];
+      if (p) { this.app.setState(p); this.nameIn.value = this.sel.value; toast(`Configuració «${this.sel.value}» carregada`); }
+    });
+    $('.preset-save', root).addEventListener('click', () => {
+      const name = this.nameIn.value.trim();
+      if (!name) { toast('Escriu un nom per a la configuració'); this.nameIn.focus(); return; }
+      const all = this.load();
+      all[name] = this.app.getState();
+      if (!this.store(all)) { toast("No s'ha pogut desar (emmagatzematge del navegador bloquejat)"); return; }
+      this.refresh(name);
+      toast(`Configuració «${name}» desada en aquest navegador`);
+    });
+    $('.preset-del', root).addEventListener('click', () => {
+      const name = this.sel.value;
+      if (!name) return;
+      const all = this.load();
+      delete all[name];
+      this.store(all);
+      this.refresh('');
+      toast(`Configuració «${name}» esborrada`);
+    });
+    $('.preset-exp', root).addEventListener('click', () => {
+      const name = this.nameIn.value.trim() || 'crossover';
+      const data = { name, ...this.app.getState() };
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+      a.download = name.replace(/[^\wÀ-ÿ·-]+/g, '_') + '.xo4.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    $('.preset-imp', root).addEventListener('click', () => this.fileIn.click());
+    this.fileIn.addEventListener('change', async () => {
+      const f = this.fileIn.files[0];
+      this.fileIn.value = '';
+      if (!f) return;
+      try {
+        const data = JSON.parse(await f.text());
+        if (data.v !== 1) throw new Error('format');
+        this.app.setState(data);
+        const name = (typeof data.name === 'string' && data.name.trim()) || f.name.replace(/\.json$/i, '');
+        const all = this.load();
+        all[name] = data;
+        this.store(all);
+        this.refresh(name);
+        toast(`Configuració «${name}» importada`);
+      } catch (e) {
+        toast('Aquest fitxer no és una configuració del XO-4');
+      }
+    });
+    this.refresh('');
+  }
+
+  refresh(selected) {
+    const names = Object.keys(this.load()).sort((a, b) => a.localeCompare(b, 'ca'));
+    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    this.sel.innerHTML = `<option value="">${names.length ? 'Tria una configuració…' : 'Cap configuració desada'}</option>` +
+      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    this.sel.value = names.includes(selected) ? selected : '';
+    if (selected) this.nameIn.value = selected;
+  }
+}
+
+/* =====================================================================
    Aplicació
    ===================================================================== */
 class App {
@@ -999,18 +1495,21 @@ class App {
     ['pink', 'white', 'brown'].forEach(t => { this.noise[t] = makeNoise(this.ctx, t); });
 
     const ctx = this.ctx;
-    this.outCount = Math.min(ctx.destination.maxChannelCount || 2, 8);
+    this.outCount = Math.min(ctx.destination.maxChannelCount || 2, MAX_OUTS);
     this.masterIn = ctx.createGain();
     this.masterGain = ctx.createGain();
     this.masterGain.gain.value = dbToLin(-12);
     this.masterAn = makeAnalyser(ctx);
-    this.merger = ctx.createChannelMerger(Math.max(this.outCount, 2));
+    this.merger = ctx.createChannelMerger(MAX_OUTS);
     this.masterIn.connect(this.masterGain);
     this.masterGain.connect(ctx.destination);
     this.masterGain.connect(this.masterAn);
 
+    this.presets = new Presets(this);
     this.channels = [new Channel(this, 0), new Channel(this, 1)];
+    this.outputs = new OutputSection(this);
     this.ready = true;
+    this.outputs.renderMatrix();
     this.applyRouting();
     this.updateMutes();
     this.bindHeader();
@@ -1025,18 +1524,7 @@ class App {
       else await this.ctx.resume();
     });
 
-    $$('#inSeg button').forEach(b => b.addEventListener('click', () => {
-      const n = +b.dataset.n;
-      $$('#inSeg button').forEach(x => x.classList.toggle('on', x === b));
-      this.channels[1].setEnabled(n === 2);
-    }));
-
-    if (this.outCount > 2) $('#routeWrap').hidden = false;
-    $$('#routeSeg button').forEach(b => b.addEventListener('click', () => {
-      $$('#routeSeg button').forEach(x => x.classList.toggle('on', x === b));
-      this.routing = b.dataset.r;
-      this.applyRouting();
-    }));
+    $$('#inSeg button').forEach(b => b.addEventListener('click', () => this.setInputs(+b.dataset.n)));
 
     const tiltBtn = $('#tiltBtn');
     tiltBtn.addEventListener('click', () => {
@@ -1052,15 +1540,19 @@ class App {
     }
     proKey.addEventListener('click', () => {
       if (!PRO_AVAILABLE) {
-        toast('Mode PRO properament: tipus de filtre, polaritat i retard per banda');
+        toast('Mode PRO properament: tipus de filtre, sortides a la targeta de so, retards i configuracions');
         return;
       }
       this.pro = !this.pro;
       proKey.classList.toggle('on', this.pro);
       proKey.setAttribute('aria-pressed', this.pro);
       document.body.classList.toggle('pro', this.pro);
-      this.channels.forEach(ch => ch.rebuild());
-      toast(this.pro ? 'Mode PRO activat: tipus de filtre, polaritat i retard per banda' : 'Mode estàndard: Linkwitz-Riley 24 dB/oct');
+      this.channels.forEach(ch => {
+        ch.rebuild();
+        if (ch.source === 'mic' && ch.inChan >= 0) ch.setSource('mic');
+      });
+      this.applyRouting();
+      toast(this.pro ? 'Mode PRO activat: tipus de filtre, sortides a la targeta de so, retards i configuracions' : 'Mode estàndard: Linkwitz-Riley 24 dB/oct');
     });
 
     this.masterKnob = new Knob({
@@ -1072,19 +1564,68 @@ class App {
     $('#masterMeter').appendChild(this.masterMeter.el);
   }
 
+  // MONITOR: suma estèreo pels altaveus. INTERFÍCIE (només PRO): matriu → sortides físiques.
   applyRouting() {
-    const d = this.ctx.destination, multi = this.routing === 'multi';
-    d.channelCount = multi ? this.outCount : 2;
+    const d = this.ctx.destination, multi = this.pro && this.routing === 'multi';
+    d.channelCount = Math.min(multi ? this.outCount : 2, d.maxChannelCount || 2);
     d.channelInterpretation = multi ? 'discrete' : 'speakers';
     this.merger.disconnect();
     if (multi) this.merger.connect(this.masterGain);
+    const outs = this.outputs;
     this.channels.forEach(ch => ch.nodes.forEach((nd, i) => {
       nd.out.disconnect();
-      const outIdx = (ch.idx * 4 + i) % this.outCount;
-      if (multi) nd.out.connect(this.merger, 0, outIdx);
-      else nd.out.connect(this.masterIn);
-      ch.setOutLabel(i, multi ? `OUT ${outIdx + 1}` : `OUT ${ch.letter}${i + 1}`);
+      if (multi) {
+        const ks = outs.targets(ch.idx, i);
+        ks.forEach(k => nd.out.connect(outs.outs[k].in));
+        ch.setOutLabel(i, ks.length ? '→ ' + ks.map(k => k + 1).join(', ') : '→ —');
+      } else {
+        nd.out.connect(this.masterIn);
+        ch.setOutLabel(i, `OUT ${ch.letter}${i + 1}`);
+      }
     }));
+    outs.renderMatrix();
+    outs.renderInfo();
+  }
+
+  setRouting(r) {
+    this.routing = r;
+    this.applyRouting();
+  }
+
+  // Després de canviar de targeta: torna a llegir quants canals té
+  updateOutCount() {
+    const n = Math.min(this.ctx.destination.maxChannelCount || 2, MAX_OUTS);
+    if (n !== this.outCount) {
+      this.outCount = n;
+      this.outputs.defaultMatrix(n);
+    }
+    this.applyRouting();
+    this.updateStatus();
+  }
+
+  setInputs(n) {
+    $$('#inSeg button').forEach(x => x.classList.toggle('on', +x.dataset.n === n));
+    this.channels[1].setEnabled(n === 2);
+  }
+
+  /* ----- configuracions ----- */
+  getState() {
+    return {
+      v: 1,
+      inputs: this.channels[1].enabled ? 2 : 1,
+      routing: this.routing,
+      channels: this.channels.map(ch => ch.getState()),
+      outputs: this.outputs.getState(),
+    };
+  }
+
+  setState(s) {
+    if (!s || typeof s !== 'object') return;
+    if (s.inputs === 1 || s.inputs === 2) this.setInputs(s.inputs);
+    if (Array.isArray(s.channels)) s.channels.slice(0, 2).forEach((cs, i) => this.channels[i].setState(cs));
+    this.outputs.setState(s.outputs);
+    if (s.routing === 'mon' || s.routing === 'multi') this.routing = s.routing;
+    this.applyRouting();
   }
 
   updateMutes() {
@@ -1104,6 +1645,7 @@ class App {
   loop() {
     requestAnimationFrame(() => this.loop());
     this.channels.forEach(ch => { if (ch.enabled) ch.tick(); });
+    if (this.pro && this.routing === 'multi') this.outputs.tick();
     this.masterMeter.update(peakDb(this.masterAn));
   }
 }
