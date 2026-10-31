@@ -362,6 +362,12 @@ select.preset-sel { width: auto; min-width: 170px; }
 .d-in { width: 76px; text-align: right; }
 .d-alt { font: 500 9.5px var(--mono); color: var(--silk-dim); }
 .btn.ident.on i, .ostrip.identing .btn.ident i { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+.cue-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+select.cue-dev { width: auto; min-width: 200px; max-width: 100%; }
+.btn.cue i { background: #3d3412; }
+.btn.cue.on i, .btn.cue-clear.on i { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+.btn.cue.on { color: var(--yellow); }
+.o-cue { width: 100%; }
 .outunit.mon-mode .matrix-wrap, .outunit.mon-mode .ostrips { opacity: .4; pointer-events: none; }
 
 /* ---------- Finestres modals (instruccions i avís de navegador) ---------- */

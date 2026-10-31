@@ -1074,15 +1074,26 @@ class OutputSection {
       const o = {
         name: `OUT ${k + 1}`, gain: 0, mute: false, invert: false, delay: 0,
         in: ctx.createGain(), pol: ctx.createGain(), dly: ctx.createDelay(MAX_OUT_DELAY_MS / 1000 + 0.01),
-        amp: ctx.createGain(), mt: ctx.createGain(), an: makeAnalyser(ctx),
+        amp: ctx.createGain(), mt: ctx.createGain(), an: makeAnalyser(ctx), cue: ctx.createGain(), cueOn: false,
       };
+      o.cue.gain.value = 0;
       o.in.channelCount = 1;
       o.in.channelCountMode = 'explicit';
       o.in.connect(o.pol); o.pol.connect(o.dly); o.dly.connect(o.amp); o.amp.connect(o.mt);
       o.mt.connect(o.an);
       o.mt.connect(app.merger, 0, k);
+      o.amp.connect(o.cue);
       return o;
     });
+
+    // Bus d'escolta (CUE): surt per un segon context d'àudio cap als altaveus o auriculars del Mac
+    this.cueBus = ctx.createGain();
+    this.cueAn = makeAnalyser(ctx);
+    this.cueBus.connect(this.cueAn);
+    this.outs.forEach(o => o.cue.connect(this.cueBus));
+    this.cueCtx = null;
+    this.cueDeviceId = '';
+    this.cueLevel = -12;
     this.buildUI();
   }
 
@@ -1139,6 +1150,15 @@ class OutputSection {
           <label class="temp-field"><input type="number" class="lcd-input temp-in" min="-20" max="50" step="1" value="20"> °C</label>
           <span class="mini-label temp-info"></span>
         </div>
+        <div class="ctrl cue-ctrl">
+          <div class="cue-row">
+            <select class="lcd-select cue-dev" aria-label="Sortida d'escolta (CUE)"><option value="">Sortida per defecte del sistema</option></select>
+            <div class="slot-cue-level"></div>
+            <div class="slot-cue-meter"></div>
+            <button class="btn cue-clear" title="Treu totes les sortides de l'escolta"><i></i>CUE OFF</button>
+          </div>
+          <span class="mini-label">ESCOLTA (CUE) · ALTAVEUS O AURICULARS</span>
+        </div>
         <div class="ctrl presets">
           <div class="preset-row">
             <select class="lcd-select preset-sel" aria-label="Configuracions desades"></select>
@@ -1172,6 +1192,19 @@ class OutputSection {
 
     this.devSel = $('.out-dev', root);
     this.devSel.addEventListener('change', () => this.setDevice(this.devSel.value));
+    this.cueSel = $('.cue-dev', root);
+    this.cueSel.addEventListener('change', () => this.setCueDevice(this.cueSel.value));
+    this.cueKnob = new Knob({
+      label: 'NIVELL CUE', min: -60, max: 6, value: this.cueLevel, def: -12, format: fmtDb, size: 'sm', color: 'var(--yellow)',
+      onInput: v => {
+        this.cueLevel = v;
+        if (this.cueGain) this.cueGain.gain.setTargetAtTime(dbToLin(v), this.cueCtx.currentTime, 0.01);
+      },
+    });
+    $('.slot-cue-level', root).appendChild(this.cueKnob.el);
+    this.cueMeter = new Meter(false);
+    $('.slot-cue-meter', root).appendChild(this.cueMeter.el);
+    $('.cue-clear', root).addEventListener('click', () => this.outs.forEach((o, k) => { if (o.cueOn) this.toggleCue(k); }));
     $('.dev-perm', root).addEventListener('click', () => this.askDeviceLabels());
     if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', () => this.listDevices());
 
@@ -1187,6 +1220,7 @@ class OutputSection {
     s.innerHTML = `
       <div class="o-head"><span class="o-num">${k + 1}</span><input class="o-name" value="${o.name}" maxlength="14" aria-label="Nom de la sortida ${k + 1}"></div>
       <div class="o-src"></div>
+      <button class="btn cue o-cue" aria-pressed="false" title="Escolta aquesta sortida pels altaveus o auriculars"><i></i>CUE</button>
       <div class="o-body"><div class="slot-meter"></div><div class="slot-gain"></div></div>
       <div class="o-delay">
         <span class="knob-label">RETARD</span>
@@ -1221,6 +1255,7 @@ class OutputSection {
     });
     toggle($('.mute', s), 'mute');
     toggle($('.inv', s), 'invert');
+    $('.o-cue', s).addEventListener('click', () => this.toggleCue(k));
     $('.ident', s).addEventListener('click', () => this.identify(k));
     $('.ostrips', this.root).appendChild(s);
     return { root: s, meter, gain, nameIn, dIn, src: $('.o-src', s), alt: $('.d-alt', s), unit: $('.d-unit', s) };
@@ -1312,6 +1347,9 @@ class OutputSection {
     this.devSel.value = devs.some(d => d.deviceId === this.deviceId) ? this.deviceId : '';
     $('.dev-perm', this.root).hidden = named || !('setSinkId' in AudioContext.prototype);
     this.devSel.disabled = !('setSinkId' in AudioContext.prototype);
+    this.cueSel.innerHTML = this.devSel.innerHTML;
+    this.cueSel.value = devs.some(d => d.deviceId === this.cueDeviceId) ? this.cueDeviceId : '';
+    this.cueSel.disabled = this.devSel.disabled;
   }
 
   async askDeviceLabels() {
@@ -1359,8 +1397,50 @@ class OutputSection {
     setTimeout(() => s.classList.remove('identing'), 1300);
   }
 
+  /* ----- escolta (CUE) ----- */
+  async ensureCue() {
+    if (this.cueCtx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const dest = this.ctx.createMediaStreamDestination();
+    this.cueBus.connect(dest);
+    this.cueCtx = new AC({ latencyHint: 'interactive' });
+    this.cueGain = this.cueCtx.createGain();
+    this.cueGain.gain.value = dbToLin(this.cueLevel);
+    this.cueCtx.createMediaStreamSource(dest.stream).connect(this.cueGain);
+    this.cueGain.connect(this.cueCtx.destination);
+    if (this.cueDeviceId) await this.setCueDevice(this.cueDeviceId);
+  }
+
+  async toggleCue(k) {
+    const o = this.outs[k];
+    o.cueOn = !o.cueOn;
+    o.cue.gain.setTargetAtTime(o.cueOn ? 1 : 0, this.ctx.currentTime, 0.008);
+    const b = $('.o-cue', this.strips[k].root);
+    b.classList.toggle('on', o.cueOn);
+    b.setAttribute('aria-pressed', o.cueOn);
+    $('.cue-clear', this.root).classList.toggle('on', this.outs.some(x => x.cueOn));
+    if (o.cueOn) {
+      await this.ensureCue();
+      if (this.cueCtx.state !== 'running') await this.cueCtx.resume();
+      if (this.app.routing !== 'multi') toast('Passa a mode INTERFÍCIE perquè les sortides tinguin senyal');
+      else if (this.ctx.state !== 'running') toast('Prem POWER per sentir el senyal');
+    }
+  }
+
+  async setCueDevice(id) {
+    this.cueDeviceId = id;
+    if (!this.cueCtx || !('setSinkId' in AudioContext.prototype)) return;
+    try {
+      await this.cueCtx.setSinkId(id);
+    } catch (e) {
+      toast("No s'ha pogut fer servir aquesta sortida per a l'escolta");
+    }
+    if (id && id === this.deviceId) toast("L'escolta i les sortides van a la mateixa targeta: tria una altra sortida per al CUE");
+  }
+
   tick() {
     for (let k = 0; k < this.count; k++) this.strips[k].meter.update(peakDb(this.outs[k].an));
+    if (this.cueCtx) this.cueMeter.update(peakDb(this.cueAn));
   }
 
   /* ----- configuracions ----- */
